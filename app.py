@@ -3,16 +3,16 @@ import pandas as pd
 import io
 import plotly.express as px
 
-st.set_page_config(page_title="Dashboard Académico Anatomía", layout="wide")
+st.set_page_config(page_title="Tablero de Control Académico", layout="wide")
 
-st.title("📊 Reporte Visual de Evaluación de Anatomía")
+st.title("🏛️ Sistema de Gestión y Análisis de Exámenes")
 
 # 1. CARGA DE ARCHIVOS
 col_f1, col_f2 = st.columns(2)
 with col_f1:
-    f_alu = st.file_uploader("📂 Resultados Alumnos", type=["xlsx"])
+    f_alu = st.file_uploader("📂 Resultados Alumnos (Excel)", type=["xlsx"])
 with col_f2:
-    f_cla = st.file_uploader("🔑 Clave de Respuestas", type=["xlsx"])
+    f_cla = st.file_uploader("🔑 Clave de Respuestas (Excel)", type=["xlsx"])
 
 if f_alu and f_cla:
     try:
@@ -25,6 +25,7 @@ if f_alu and f_cla:
             'B': [str(x).strip().upper() for x in df_claves.iloc[2, 1:41].values]
         }
 
+        # PROCESAMIENTO
         def procesar(row):
             t = str(row['TIPO']).strip().upper()
             if t not in claves: return row
@@ -37,42 +38,64 @@ if f_alu and f_cla:
             row['Estado'] = 'APROBADO' if row['Nota'] >= 11 else 'DESAPROBADO'
             return row
 
-        df_res = df_alumnos.apply(procesar, axis=1)
-        df_plot = df_res.drop(columns=[str(i) for i in range(1, 41)], errors='ignore')
+        df_full = df_alumnos.apply(procesar, axis=1)
+        # Limpiamos para el reporte (Sin columnas 1-40)
+        df_limpio = df_full.drop(columns=[str(i) for i in range(1, 41)], errors='ignore')
 
-        # --- PESTAÑAS ---
-        t1, t2, t3 = st.tabs(["📈 Reporte Visual", "🎯 Análisis por Pregunta", "📋 Lista de Notas"])
+        # PSICOMETRÍA UNIFICADA (TEMA A Y B)
+        def calc_psico(df, label):
+            if df.empty: return pd.DataFrame()
+            df_s = df.sort_values(by='Nota', ascending=False)
+            n27 = int(len(df_s) * 0.27) or 1
+            sup, inf = df_s.head(n27), df_s.tail(n27)
+            items = []
+            for i in range(1, 41):
+                col = f'p{i}_b'
+                dif = df[col].mean() * 100
+                dis = (sup[col].sum() - inf[col].sum()) / n27
+                nivel = "FÁCIL" if dif > 70 else ("DIFÍCIL" if dif < 30 else "REGULAR")
+                items.append({"Tema": label, "Pregunta": f"P{i}", "Dificultad %": round(dif,1), "Discriminación": round(dis,2), "Nivel": nivel})
+            return pd.DataFrame(items)
 
+        psico_final = pd.concat([calc_psico(df_full[df_full['TIPO']=='A'], "TEMA A"), 
+                                 calc_psico(df_full[df_full['TIPO']=='B'], "TEMA B")])
+
+        # RESUMEN PARA EL JEFE
+        resumen = df_limpio.groupby('TIPO')['Nota'].agg(['count', 'mean', 'max', 'min']).reset_index()
+        resumen.columns = ['Tema', 'Alumnos', 'Promedio', 'Nota Máx', 'Nota Mín']
+
+        # --- DASHBOARD WEB ---
+        t1, t2, t3 = st.tabs(["📈 Gráficas", "🎯 Calidad de Preguntas", "📋 Lista de Notas"])
         with t1:
-            st.subheader("Distribución de Resultados")
-            g1, g2 = st.columns(2)
-            
-            with g1:
-                # GRÁFICA DE TORTA (APROBADOS VS DESAPROBADOS)
-                fig_pie = px.pie(df_plot, names='Estado', title="Tasa de Aprobación",
-                                 color='Estado', color_discrete_map={'APROBADO':'#2ecc71', 'DESAPROBADO':'#e74c3c'},
-                                 hole=0.4)
-                st.plotly_chart(fig_pie, use_container_width=True)
-            
-            with g2:
-                # GRÁFICA DE BARRAS (NOTAS POR TEMA)
-                fig_bar = px.box(df_plot, x='TIPO', y='Nota', points="all", title="Distribución de Notas por Tema",
-                                 color='TIPO', color_discrete_sequence=['#3498db', '#9b59b6'])
-                st.plotly_chart(fig_bar, use_container_width=True)
-
+            st.plotly_chart(px.pie(df_limpio, names='Estado', title="Tasa de Aprobación", color_discrete_sequence=['#2ecc71', '#e74c3c']))
+            st.table(resumen)
         with t2:
-            st.info("Aquí puedes ver el semáforo de dificultad por cada pregunta.")
-            # (Lógica de psicometría que ya teníamos...)
+            st.dataframe(psico_final, use_container_width=True)
 
-        with t3:
-            st.dataframe(df_plot[['DNI', 'TIPO', 'Nota', 'Estado']], use_container_width=True)
-
-        # 5. DESCARGA
+        # --- EXPORTACIÓN PROFESIONAL (El Excel que pediste) ---
+        st.divider()
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_plot[['DNI', 'TIPO', 'Nota', 'Estado']].to_excel(writer, index=False, sheet_name='Reporte_Final')
-        
-        st.download_button("📥 Descargar Informe de Resultados", output.getvalue(), "Reporte_Anatomia.xlsx", use_container_width=True)
+            # Hoja 1: El Resumen Gerencial
+            resumen.to_excel(writer, index=False, sheet_name='RESUMEN_EJECUTIVO')
+            # Hoja 2: La lista de alumnos limpia
+            df_limpio[['DNI', 'TIPO', 'Nota', 'Estado']].to_excel(writer, index=False, sheet_name='NOTAS_ALUMNOS')
+            # Hoja 3: Psicometría con colores
+            psico_final.to_excel(writer, index=False, sheet_name='ANALISIS_CALIDAD')
+            
+            # Formatos de Excel
+            book = writer.book
+            sheet_psico = writer.sheets['ANALISIS_CALIDAD']
+            
+            fmt_red = book.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
+            fmt_yel = book.add_format({'bg_color': '#FFEB9C', 'font_color': '#9C6500'})
+            fmt_grn = book.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100'})
+            
+            sheet_psico.conditional_format('E2:E81', {'type': 'cell', 'criteria': 'equal to', 'value': '"DIFÍCIL"', 'format': fmt_red})
+            sheet_psico.conditional_format('E2:E81', {'type': 'cell', 'criteria': 'equal to', 'value': '"REGULAR"', 'format': fmt_yel})
+            sheet_psico.conditional_format('E2:E81', {'type': 'cell', 'criteria': 'equal to', 'value': '"FÁCIL"', 'format': fmt_grn})
+
+        st.download_button("📥 DESCARGAR INFORME GERENCIAL COMPLETO", output.getvalue(), "Reporte_Evaluacion_Profesional.xlsx", use_container_width=True)
 
     except Exception as e:
         st.error(f"Error: {e}")

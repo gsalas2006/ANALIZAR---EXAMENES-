@@ -5,10 +5,10 @@ import io
 st.set_page_config(page_title="Análisis Anatomía", layout="wide")
 
 st.title("🩺 Sistema de Calificación y Psicometría")
-st.write("Sube los archivos para procesar los resultados de Anatomía Humana.")
+st.write("Seleccione los archivos de resultados y claves para iniciar el análisis estadístico.")
 
 # Carga de archivos
-file_alu = st.file_uploader("Subir Examen (Alumnos)", type=["xlsx"])
+file_alu = st.file_uploader("Subir Examen tema A y tema B (Alumnos)", type=["xlsx"])
 file_cla = st.file_uploader("Subir Clave de Respuestas", type=["xlsx"])
 
 if file_alu and file_cla:

@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
 import io
+import plotly.express as px
 
-st.set_page_config(page_title="Tablero Gerencial de Evaluaciones", layout="wide")
+st.set_page_config(page_title="Tablero Gerencial Pro", layout="wide")
 
 st.title("🏛️ Sistema de Gestión y Análisis de Exámenes")
-st.markdown("Generación de reportes comparativos por temas y análisis psicométrico.")
 
 # 1. CARGA DE ARCHIVOS
 col_files = st.columns(2)
@@ -20,13 +20,11 @@ if file_alu and file_cla:
         df_claves = pd.read_excel(file_cla)
         df_alumnos.columns = [str(c).strip() for c in df_alumnos.columns]
         
-        # Diccionario de claves
         claves_dict = {
             'A': [str(x).strip().upper() for x in df_claves.iloc[1, 1:41].values],
             'B': [str(x).strip().upper() for x in df_claves.iloc[2, 1:41].values]
         }
 
-        # Procesamiento
         def calificar(row):
             tema = str(row['TIPO']).strip().upper()
             if tema not in claves_dict: return row
@@ -39,75 +37,61 @@ if file_alu and file_cla:
             row['Estado'] = 'APROBADO' if row['Nota'] >= 11 else 'DESAPROBADO'
             return row
 
-        df_final = df_alumnos.apply(calificar, axis=1)
+        df_final = df_alumnos.apply(calificar, axis=1).copy()
 
-        # --- SECCIÓN DE PESTAÑAS (TABS) ---
-        tab1, tab2, tab3, tab4 = st.tabs(["📊 Resumen Gerencial", "🅰️ Análisis Tema A", "🅱️ Análisis Tema B", "📜 Lista de Notas"])
+        # --- SECCIÓN DE PESTAÑAS ---
+        tab_res, tab_gra, tab_psico, tab_lista = st.tabs(["📊 Resumen Gerencial", "📈 Gráficas", "🎯 Psicometría", "📜 Lista de Notas"])
 
-        # PESTAÑA 1: RESUMEN GERENCIAL
-        with tab1:
-            st.subheader("Indicadores de Desempeño Global")
+        with tab_res:
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Alumnos Evaluados", len(df_final))
-            c2.metric("Promedio General", f"{df_final['Nota'].mean():.2f}")
+            c1.metric("Alumnos", len(df_final))
+            c2.metric("Promedio", f"{df_final['Nota'].mean():.2f}")
             c3.metric("Aprobados", len(df_final[df_final['Estado']=='APROBADO']))
             c4.metric("% Rendimiento", f"{(len(df_final[df_final['Estado']=='APROBADO'])/len(df_final))*100:.1f}%")
             
-            # Comparativo de Temas
             st.divider()
-            st.write("**Comparación por Temas:**")
-            comparativo = df_final.groupby('TIPO')['Nota'].agg(['count', 'mean', 'max', 'min']).rename(columns={'count':'Alumnos', 'mean':'Promedio'})
-            st.table(comparativo.style.format("{:.2f}", subset=['Promedio', 'max', 'min']))
+            comparativo = df_final.groupby('TIPO')['Nota'].agg(['count', 'mean', 'max']).rename(columns={'count':'Alumnos', 'mean':'Promedio'})
+            st.write("**Resumen por Tema:**")
+            st.table(comparativo)
 
-        # FUNCIÓN PARA ANÁLISIS PSICOMÉTRICO POR TEMA
-        def obtener_analisis_tema(df_tema):
-            df_s = df_tema.sort_values(by='Nota', ascending=False)
-            n_27 = int(len(df_s) * 0.27) or 1
-            sup, inf = df_s.head(n_27), df_s.tail(n_27)
-            res = []
+        with tab_gra:
+            st.subheader("Visualización de Resultados")
+            col_g1, col_g2 = st.columns(2)
+
+            with col_g1:
+                # Gráfico de Torta - Aprobados vs Desaprobados
+                fig_pie = px.pie(df_final, names='Estado', title='Distribución de Aprobados',
+                                 color='Estado', color_discrete_map={'APROBADO':'#2ecc71', 'DESAPROBADO':'#e74c3c'})
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+            with col_g2:
+                # Histograma de Notas
+                fig_hist = px.histogram(df_final, x='Nota', title='Frecuencia de Notas',
+                                       nbins=10, color_discrete_sequence=['#3498db'])
+                st.plotly_chart(fig_hist, use_container_width=True)
+
+        with tab_psico:
+            # Lógica simplificada de discriminación para visualizar
+            st.subheader("Análisis de Dificultad por Pregunta")
+            dificultad_lista = []
             for i in range(1, 41):
-                col_b = f'p{i}_b'
-                dificultad = df_tema[col_b].mean()
-                discrim = (sup[col_b].sum() - inf[col_b].sum()) / n_27
-                res.append({"Pregunta": f"P{i}", "Dificultad %": dificultad*100, "Discriminación": discrim})
-            return pd.DataFrame(res)
+                dificultad_lista.append({'Pregunta': f'P{i}', 'Facilidad': df_final[f'p{i}_b'].mean()*100})
+            df_dif = pd.DataFrame(dificultad_lista)
+            
+            fig_bar = px.bar(df_dif, x='Pregunta', y='Facilidad', title='¿Qué preguntas fueron más fáciles?',
+                             labels={'Facilidad': '% de Aciertos'})
+            st.plotly_chart(fig_bar, use_container_width=True)
 
-        # PESTAÑA 2 Y 3: ANÁLISIS POR TEMA
-        df_a = df_final[df_final['TIPO'] == 'A']
-        df_b = df_final[df_final['TIPO'] == 'B']
-
-        with tab2:
-            st.subheader("Calidad de Preguntas - Tema A")
-            if not df_a.empty:
-                st.dataframe(obtener_analisis_tema(df_a), use_container_width=True)
-            else: st.info("No hay datos del Tema A")
-
-        with tab3:
-            st.subheader("Calidad de Preguntas - Tema B")
-            if not df_b.empty:
-                st.dataframe(obtener_analisis_tema(df_b), use_container_width=True)
-            else: st.info("No hay datos del Tema B")
-
-        # PESTAÑA 4: LISTA DE NOTAS
-        with tab4:
-            st.subheader("Relación Nominal de Estudiantes")
+        with tab_lista:
             st.dataframe(df_final[['DNI', 'TIPO', 'Nota', 'Estado']], use_container_width=True)
 
-        # 5. DESCARGA UNIFICADA
-        st.divider()
+        # 5. DESCARGA
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_final.to_excel(writer, index=False, sheet_name='Lista_General')
-            if not df_a.empty: obtener_analisis_tema(df_a).to_excel(writer, index=False, sheet_name='Analisis_Tema_A')
-            if not df_b.empty: obtener_analisis_tema(df_b).to_excel(writer, index=False, sheet_name='Analisis_Tema_B')
-            comparativo.to_excel(writer, sheet_name='Resumen_Gerencial')
+            df_final.to_excel(writer, index=False, sheet_name='General')
+            comparativo.to_excel(writer, sheet_name='Resumen')
         
-        st.download_button(
-            label="📥 DESCARGAR INFORME GERENCIAL (EXCEL)",
-            data=output.getvalue(),
-            file_name="Informe_Gerencial_Completo.xlsx",
-            use_container_width=True
-        )
+        st.download_button("📥 DESCARGAR INFORME COMPLETO", output.getvalue(), "Reporte_Grafico.xlsx", use_container_width=True)
 
     except Exception as e:
-        st.error(f"Error en el procesamiento: {e}")
+        st.error(f"Error: {e}")
